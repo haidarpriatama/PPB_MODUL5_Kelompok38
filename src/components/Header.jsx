@@ -1,21 +1,35 @@
-import { Plus } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Plus, ShoppingCart } from 'lucide-react'
 import { useFavorites } from '../hooks/useFavorites'
+import { getCartItemCount } from '../utils/cartStorage'
 
 const NAV_ITEMS = [
   { id: 'Catalog', label: 'Catalog' },
   { id: 'Favorites', label: 'Favorites', hasBadge: true },
   { id: 'Profile', label: 'Profile' },
-  { id: 'About', label: 'About' },
-  { id: 'Contact', label: 'Contact' },
 ]
 
-function Header({ tab, onTab, onNavigateCreate }) {
+function Header({ tab, onTab, onNavigateCreate, onOpenCart }) {
   const { favorites } = useFavorites()
   const favCount = favorites ? favorites.length : 0
 
+  const [cartCount, setCartCount] = useState(() => getCartItemCount())
+
+  useEffect(() => {
+    const handleCartUpdate = () => {
+      setCartCount(getCartItemCount())
+    }
+    window.addEventListener('cart_updated', handleCartUpdate)
+    return () => window.removeEventListener('cart_updated', handleCartUpdate)
+  }, [])
+
   return (
     <header className="header">
-      <div className="header-brand-wrap" onClick={() => onTab('Catalog')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}>
+      <div
+        className="header-brand-wrap"
+        onClick={() => onTab('Catalog')}
+        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+      >
         <div className="header-logo-badge">
           <img src="/logo.png" alt="Bore & Barrel" />
         </div>
@@ -36,6 +50,33 @@ function Header({ tab, onTab, onNavigateCreate }) {
             )}
           </button>
         ))}
+
+        {/* Shopping Cart button */}
+        <button
+          type="button"
+          className="nav-link cart-nav-btn"
+          onClick={onOpenCart}
+          title="Lihat Keranjang Belanja"
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }}
+        >
+          <ShoppingCart size={17} />
+          <span>Cart</span>
+          {cartCount > 0 && (
+            <span
+              className="nav-badge"
+              style={{
+                background: 'var(--brass)',
+                color: '#fff',
+                marginLeft: '2px',
+                fontSize: '0.75rem',
+                padding: '2px 6px',
+                borderRadius: '10px',
+              }}
+            >
+              {cartCount}
+            </span>
+          )}
+        </button>
       </nav>
 
       {onNavigateCreate && (

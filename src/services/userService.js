@@ -59,9 +59,9 @@ export const getUserProfile = () => {
     /* corrupted data — fall through to default */
   }
   return {
-    username: 'Shooter',
+    username: 'Kelompok 38',
     avatar: null,
-    bio: '',
+    bio: 'Praktikum PPB 2026 - Modul 5 PWA II (Kelompok 38)',
     userId: getUserIdentifier(),
   }
 }

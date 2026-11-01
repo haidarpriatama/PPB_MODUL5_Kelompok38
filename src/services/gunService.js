@@ -1,32 +1,47 @@
 import { apiClient, IS_SUPABASE } from '../config/api'
+import queryCache from '../utils/queryCache'
+import { isArchived } from '../utils/archiveStorage'
 
 // ---------------------------------------------------------------------------
 // Normalizer — standardizes product shape whether received from Supabase
 // (public.products) or from the university API (/api/v1/recipes).
+// Supports multiple images & gallery parsing.
 // ---------------------------------------------------------------------------
 export const normalizeProduct = (item) => {
   if (!item) return null
 
-  // Resolve specifications from Supabase `specs` (text array) or API `ingredients`
+  // Extract gallery images if stored in specs
   let specsList = []
+  const galleryImages = []
+
   if (Array.isArray(item.specs)) {
-    specsList = item.specs.map((s, idx) => {
+    item.specs.forEach((s, idx) => {
       if (typeof s === 'string') {
-        const colonIndex = s.indexOf(':')
-        if (colonIndex > -1) {
-          return {
-            id: `spec-${idx}`,
-            name: s.substring(0, colonIndex).trim(),
-            quantity: s.substring(colonIndex + 1).trim(),
+        if (s.startsWith('Images:') || s.startsWith('Gallery:')) {
+          const rawUrls = s.substring(s.indexOf(':') + 1).split(';')
+          rawUrls.forEach((u) => {
+            const cleanUrl = u.trim()
+            if (cleanUrl) galleryImages.push(cleanUrl)
+          })
+        } else {
+          const colonIndex = s.indexOf(':')
+          if (colonIndex > -1) {
+            specsList.push({
+              id: `spec-${idx}`,
+              name: s.substring(0, colonIndex).trim(),
+              quantity: s.substring(colonIndex + 1).trim(),
+            })
+          } else {
+            specsList.push({
+              id: `spec-${idx}`,
+              name: 'Specification',
+              quantity: s.trim(),
+            })
           }
         }
-        return {
-          id: `spec-${idx}`,
-          name: 'Specification',
-          quantity: s.trim(),
-        }
+      } else {
+        specsList.push(s)
       }
-      return s
     })
   } else if (Array.isArray(item.ingredients)) {
     specsList = item.ingredients
@@ -36,7 +51,17 @@ export const normalizeProduct = (item) => {
   const stepsList =
     Array.isArray(item.steps) && item.steps.length > 0
       ? item.steps
-      : ['Verify firearm is completely unloaded and point in safe direction.', 'Inspect receiver and mechanism for maintenance.']
+      : [
+          'Verify firearm is completely unloaded and point in safe direction.',
+          'Inspect receiver and mechanism for maintenance.',
+        ]
+
+  const primaryImage = item.image_url || item.image || '/guns/pistol.svg'
+
+  // Build unified images array (avoid duplicates)
+  const allImages = Array.from(
+    new Set([primaryImage, ...galleryImages, ...(Array.isArray(item.images) ? item.images : [])].filter(Boolean)),
+  )
 
   return {
     ...item,
@@ -47,23 +72,42 @@ export const normalizeProduct = (item) => {
     caliber: item.caliber || 'Standard',
     price: Number(item.price ?? item.cook_time ?? 0),
     description: item.description || '',
-    image_url: item.image_url || item.image || '/guns/pistol.svg',
-    image: item.image_url || item.image || '/guns/pistol.svg',
+    image_url: primaryImage,
+    image: primaryImage,
+    images: allImages.length > 0 ? allImages : [primaryImage],
     ingredients: specsList,
     steps: stepsList,
   }
 }
 
 // ---------------------------------------------------------------------------
-// GunService — wraps backend CRUD endpoints.
-// Supports both Supabase PostgREST table (/rest/v1/products) and
-// standard REST API (/api/v1/recipes).
+// GunService — wraps backend CRUD endpoints with Query Caching & Soft Delete
 // ---------------------------------------------------------------------------
 class GunService {
   /**
-   * Fetch a paginated, filterable list of products.
+   * Fetch a paginated, filterable list of products with Query Caching.
    */
   async getGuns(params = {}) {
+    const cacheKey = `guns_${JSON.stringify(params)}`
+
+    if (!params.bypassCache) {
+      const cached = queryCache.get(cacheKey)
+      if (cached) {
+        // Filter out archived items unless explicitly requested
+        const filtered = params.includeArchived
+          ? cached.data
+          : cached.data.filter((g) => !isArchived(g.id))
+        return {
+          ...cached,
+          data: filtered,
+          pagination: {
+            ...cached.pagination,
+            total: filtered.length,
+          },
+        }
+      }
+    }
+
     if (IS_SUPABASE) {
       const queryParts = ['select=*']
 
@@ -88,15 +132,32 @@ class GunService {
 
       const queryString = queryParts.join('&')
       const data = await apiClient.get(`/rest/v1/products?${queryString}`)
-      const list = Array.isArray(data) ? data.map(normalizeProduct) : []
+      const rawList = Array.isArray(data) ? data.map(normalizeProduct) : []
 
-      return {
+      const result = {
         success: true,
-        data: list,
+        data: rawList,
         pagination: {
-          total: list.length,
+          total: rawList.length,
           page: params.page || 1,
           limit: params.limit || 50,
+        },
+      }
+
+      // Store in query cache
+      queryCache.set(cacheKey, result)
+
+      // Filter out archived items
+      const activeList = params.includeArchived
+        ? rawList
+        : rawList.filter((g) => !isArchived(g.id))
+
+      return {
+        ...result,
+        data: activeList,
+        pagination: {
+          ...result.pagination,
+          total: activeList.length,
         },
       }
     }
@@ -105,33 +166,69 @@ class GunService {
     const clean = Object.fromEntries(
       Object.entries(params).filter(([, v]) => v !== '' && v != null),
     )
-    return apiClient.get('/api/v1/recipes', { params: clean })
+    const response = await apiClient.get('/api/v1/recipes', { params: clean })
+    queryCache.set(cacheKey, response)
+    return response
   }
 
   /**
-   * Fetch a single product by ID.
+   * Fetch a single product by ID (with caching).
    */
-  async getGunById(id) {
+  async getGunById(id, bypassCache = false) {
+    const cacheKey = `gun_${id}`
+    if (!bypassCache) {
+      const cached = queryCache.get(cacheKey)
+      if (cached) return cached
+    }
+
     if (IS_SUPABASE) {
       const data = await apiClient.get(`/rest/v1/products?id=eq.${id}&select=*`)
       if (Array.isArray(data) && data.length > 0) {
-        return { success: true, data: normalizeProduct(data[0]) }
+        const result = { success: true, data: normalizeProduct(data[0]) }
+        queryCache.set(cacheKey, result)
+        return result
       }
       throw new Error('Hardware item not found.')
     }
-    return apiClient.get(`/api/v1/recipes/${id}`)
+
+    const response = await apiClient.get(`/api/v1/recipes/${id}`)
+    queryCache.set(cacheKey, response)
+    return response
+  }
+
+  /**
+   * Helper to serialize multiple images into specs array
+   */
+  formatSpecsWithGallery(specsInput, imagesInput) {
+    const specsArray = Array.isArray(specsInput)
+      ? specsInput
+          .filter((i) => i && i.name)
+          .map((i) => `${i.name}: ${i.quantity}`)
+      : []
+
+    if (Array.isArray(imagesInput) && imagesInput.length > 1) {
+      // Store secondary images in a special specs entry
+      const extraImages = imagesInput.slice(1).join(';')
+      specsArray.push(`Images: ${extraImages}`)
+    }
+
+    return specsArray
   }
 
   /**
    * Create a new product.
    */
   async createGun(data) {
+    const images = Array.isArray(data.images) && data.images.length > 0
+      ? data.images
+      : [data.image_url || '/guns/pistol.svg']
+    const primaryImage = images[0]
+
     if (IS_SUPABASE) {
-      const specsArray = Array.isArray(data.ingredients)
-        ? data.ingredients.map((i) => `${i.name}: ${i.quantity}`)
-        : Array.isArray(data.specs)
-        ? data.specs
-        : []
+      const specsArray = this.formatSpecsWithGallery(
+        data.ingredients || data.specs,
+        images,
+      )
 
       const payload = {
         name: data.name,
@@ -140,29 +237,34 @@ class GunService {
         price: Number(data.price ?? data.cook_time ?? 0),
         description: data.description || '',
         specs: specsArray,
-        image_url: data.image_url || null,
+        image_url: primaryImage,
       }
 
       const res = await apiClient.post('/rest/v1/products', payload, {
         headers: { Prefer: 'return=representation' },
       })
       const created = Array.isArray(res) ? res[0] : res
+
+      // Invalidate cache
+      queryCache.invalidate('guns')
+
       return { success: true, data: normalizeProduct(created) }
     }
-    return apiClient.post('/api/v1/recipes', data)
+
+    const res = await apiClient.post('/api/v1/recipes', data)
+    queryCache.invalidate('guns')
+    return res
   }
 
   /**
    * Update existing product.
    */
   async updateGun(id, data) {
-    if (IS_SUPABASE) {
-      const specsArray = Array.isArray(data.ingredients)
-        ? data.ingredients.map((i) => `${i.name}: ${i.quantity}`)
-        : Array.isArray(data.specs)
-        ? data.specs
-        : undefined
+    const images = Array.isArray(data.images) && data.images.length > 0
+      ? data.images
+      : data.image_url ? [data.image_url] : null
 
+    if (IS_SUPABASE) {
       const payload = {
         updated_at: new Date().toISOString(),
       }
@@ -173,16 +275,36 @@ class GunService {
         payload.price = Number(data.price ?? data.cook_time ?? 0)
       }
       if (data.description !== undefined) payload.description = data.description
-      if (specsArray !== undefined) payload.specs = specsArray
-      if (data.image_url !== undefined) payload.image_url = data.image_url
+
+      if (images) {
+        payload.image_url = images[0]
+      } else if (data.image_url !== undefined) {
+        payload.image_url = data.image_url
+      }
+
+      if (data.ingredients !== undefined || data.specs !== undefined || images) {
+        payload.specs = this.formatSpecsWithGallery(
+          data.ingredients || data.specs || [],
+          images || [data.image_url],
+        )
+      }
 
       const res = await apiClient.patch(`/rest/v1/products?id=eq.${id}`, payload, {
         headers: { Prefer: 'return=representation' },
       })
       const updated = Array.isArray(res) ? res[0] : res
+
+      // Invalidate cache
+      queryCache.invalidate('guns')
+      queryCache.invalidate(`gun_${id}`)
+
       return { success: true, data: normalizeProduct(updated) }
     }
-    return apiClient.put(`/api/v1/recipes/${id}`, data)
+
+    const res = await apiClient.put(`/api/v1/recipes/${id}`, data)
+    queryCache.invalidate('guns')
+    queryCache.invalidate(`gun_${id}`)
+    return res
   }
 
   /**
@@ -192,18 +314,26 @@ class GunService {
     if (IS_SUPABASE) {
       return this.updateGun(id, data)
     }
-    return apiClient.patch(`/api/v1/recipes/${id}`, data)
+    const res = await apiClient.patch(`/api/v1/recipes/${id}`, data)
+    queryCache.invalidate('guns')
+    queryCache.invalidate(`gun_${id}`)
+    return res
   }
 
   /**
-   * Delete product.
+   * Delete product permanently.
    */
   async deleteGun(id) {
     if (IS_SUPABASE) {
       await apiClient.delete(`/rest/v1/products?id=eq.${id}`)
+      queryCache.invalidate('guns')
+      queryCache.invalidate(`gun_${id}`)
       return { success: true }
     }
-    return apiClient.delete(`/api/v1/recipes/${id}`)
+    const res = await apiClient.delete(`/api/v1/recipes/${id}`)
+    queryCache.invalidate('guns')
+    queryCache.invalidate(`gun_${id}`)
+    return res
   }
 }
 

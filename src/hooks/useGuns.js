@@ -18,12 +18,12 @@ export function useGuns(params = {}) {
   // Serialise params so the effect re-runs when they change.
   const paramKey = JSON.stringify(params)
 
-  const fetchGuns = useCallback(async () => {
+  const fetchGuns = useCallback(async (bypassCache = false) => {
     try {
       setLoading(true)
       setError(null)
 
-      const response = await gunService.getGuns(params)
+      const response = await gunService.getGuns({ ...params, bypassCache })
 
       if (response.success) {
         setGuns(response.data || [])

@@ -109,6 +109,25 @@ export const getAllDraftIds = () => {
 }
 
 /**
+ * Return all existing drafts with full data and formatted time
+ */
+export const getAllDrafts = () => {
+  const ids = getAllDraftIds()
+  return ids
+    .map((id) => {
+      const data = loadDraft(id)
+      const timestamp = getDraftTimestamp(id)
+      return {
+        id,
+        data,
+        timestamp,
+        formattedTime: formatDraftTime(timestamp),
+      }
+    })
+    .filter((d) => d.data !== null)
+}
+
+/**
  * Remove every gun draft from storage.
  */
 export const clearAllDrafts = () => {

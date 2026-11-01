@@ -46,6 +46,8 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
   })
 
   const [currentImageUrl, setCurrentImageUrl] = useState('')
+  const [galleryImages, setGalleryImages] = useState([])
+  const [newImageUrl, setNewImageUrl] = useState('')
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
   const [uploading, setUploading] = useState(false)
@@ -88,7 +90,12 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
             servings: data.servings || 1,
             is_featured: Boolean(data.is_featured),
           })
-          setCurrentImageUrl(data.image_url || data.image || '/guns/pistol.svg')
+          const primaryImg = data.image_url || data.image || '/guns/pistol.svg'
+          setCurrentImageUrl(primaryImg)
+          const initImages = Array.isArray(data.images) && data.images.length > 0
+            ? data.images
+            : [primaryImg]
+          setGalleryImages(initImages)
 
           if (data.ingredients && data.ingredients.length > 0) {
             setSpecs(data.ingredients.map((ing) => ({
@@ -131,6 +138,9 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
       if (draft.formData) setFormData(draft.formData)
       if (draft.specs) setSpecs(draft.specs)
       if (draft.steps) setSteps(draft.steps)
+      if (draft.galleryImages && Array.isArray(draft.galleryImages)) {
+        setGalleryImages(draft.galleryImages)
+      }
       if (draft.imagePreview) {
         setImagePreview(draft.imagePreview)
       }
@@ -152,6 +162,7 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
       specs,
       steps,
       imagePreview: imagePreview || currentImageUrl,
+      galleryImages,
     }
     const saved = saveDraft(draftData, targetId)
     if (saved) {
@@ -190,6 +201,7 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
       const res = await uploadService.uploadImage(imageFile)
       if (res.success && res.data?.url) {
         setCurrentImageUrl(res.data.url)
+        setGalleryImages((prev) => Array.from(new Set([res.data.url, ...prev])))
         setImageFile(null)
         setImagePreview(null)
         setSuccessMsg('New image uploaded successfully.')
@@ -198,11 +210,34 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
     } catch (err) {
       console.warn('Image upload failed, using local blob:', err)
       setCurrentImageUrl(imagePreview)
+      setGalleryImages((prev) => Array.from(new Set([imagePreview, ...prev])))
       setImageFile(null)
       setImagePreview(null)
     } finally {
       setUploading(false)
     }
+  }
+
+  const handleAddImageUrl = (url) => {
+    if (!url || !url.trim()) return
+    setGalleryImages((prev) => Array.from(new Set([...prev, url.trim()])))
+    setNewImageUrl('')
+  }
+
+  const handleRemoveGalleryImage = (idx) => {
+    if (galleryImages.length <= 1) {
+      alert('Katalog harus memiliki minimal 1 gambar.')
+      return
+    }
+    setGalleryImages((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleSetPrimaryImage = (idx) => {
+    setGalleryImages((prev) => {
+      const copy = [...prev]
+      const [chosen] = copy.splice(idx, 1)
+      return [chosen, ...copy]
+    })
   }
 
   // Specs & Steps
@@ -265,6 +300,8 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
       return
     }
 
+    const finalImages = galleryImages.length > 0 ? galleryImages : [imagePreview || currentImageUrl || '/guns/pistol.svg']
+
     const payload = {
       name: formData.name.trim(),
       type: formData.type || (formData.category === 'minuman' ? 'Rifle' : 'Pistol'),
@@ -272,7 +309,8 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
       price: Number(formData.price) || 500,
       category: formData.category || 'makanan',
       description: formData.description.trim() || `${formData.type} caliber ${formData.caliber}.`,
-      image_url: imagePreview || currentImageUrl || '/guns/pistol.svg',
+      image_url: finalImages[0],
+      images: finalImages,
       prep_time: 15,
       cook_time: Number(formData.price) || 500,
       servings: Number(formData.servings) || 1,
@@ -347,16 +385,17 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
       )}
 
       <form onSubmit={handleSubmit} className="entry-form">
-        {/* Imagery Section */}
+        {/* Imagery Section with Multiple Images (Challenge 9) */}
         <div className="card-box">
-          <h2 className="card-box-title">Visual Asset</h2>
-          <div className="edit-img-wrap">
-            <img
-              src={imagePreview || currentImageUrl}
-              alt="Current hardware"
-              className="edit-current-img"
-            />
-            <div className="edit-img-controls">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+            <div>
+              <h2 className="card-box-title" style={{ margin: 0 }}>Weapon Gallery ({galleryImages.length} images)</h2>
+              <p className="card-box-desc" style={{ margin: '4px 0 0' }}>
+                Kelola koleksi foto untuk senjata ini. Gambar pertama adalah gambar sampul utama.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
               <input
                 id="edit-gun-image"
                 type="file"
@@ -364,8 +403,8 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
                 onChange={handleImageChange}
                 className="hidden-file-input"
               />
-              <label htmlFor="edit-gun-image" className="btn btn--outline btn--sm">
-                <Upload size={14} /> Select New Image File
+              <label htmlFor="edit-gun-image" className="btn btn--outline btn--sm" style={{ cursor: 'pointer' }}>
+                <Upload size={14} /> Pilih File Foto
               </label>
 
               {imageFile && (
@@ -375,16 +414,126 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
                   onClick={handleUploadNewImage}
                   disabled={uploading}
                 >
-                  {uploading ? (
-                    <>
-                      <Loader size={14} className="spin" /> Uploading…
-                    </>
-                  ) : (
-                    'Upload to MinIO'
-                  )}
+                  {uploading ? <Loader size={14} className="spin" /> : 'Unggah Foto'}
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Gallery Thumbnails Grid */}
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
+            {galleryImages.map((img, idx) => (
+              <div
+                key={idx}
+                style={{
+                  position: 'relative',
+                  width: '90px',
+                  height: '90px',
+                  borderRadius: '6px',
+                  border: idx === 0 ? '2px solid var(--brass)' : '1px solid var(--line)',
+                  background: '#fff',
+                  padding: '4px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <img
+                  src={img}
+                  alt={`Preview ${idx + 1}`}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+                {idx === 0 ? (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      bottom: '2px',
+                      left: '2px',
+                      right: '2px',
+                      background: 'var(--brass)',
+                      color: '#fff',
+                      fontSize: '0.65rem',
+                      fontWeight: 700,
+                      textAlign: 'center',
+                      borderRadius: '2px',
+                    }}
+                  >
+                    Primary
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    style={{
+                      position: 'absolute',
+                      bottom: '2px',
+                      left: '2px',
+                      right: '2px',
+                      background: 'rgba(24,34,44,0.75)',
+                      color: '#fff',
+                      fontSize: '0.62rem',
+                      border: 'none',
+                      cursor: 'pointer',
+                      borderRadius: '2px',
+                    }}
+                    onClick={() => handleSetPrimaryImage(idx)}
+                    title="Jadikan gambar utama"
+                  >
+                    Set Primary
+                  </button>
+                )}
+                {galleryImages.length > 1 && (
+                  <button
+                    type="button"
+                    style={{
+                      position: 'absolute',
+                      top: '-6px',
+                      right: '-6px',
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '50%',
+                      background: '#c53030',
+                      color: '#fff',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onClick={() => handleRemoveGalleryImage(idx)}
+                    title="Hapus foto ini"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Add image by URL */}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="url"
+              placeholder="Atau tambahkan URL gambar baru (https://...)"
+              className="form-input"
+              style={{ flex: 1, minWidth: '220px', padding: '6px 10px', fontSize: '0.85rem' }}
+              value={newImageUrl}
+              onChange={(e) => setNewImageUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  handleAddImageUrl(newImageUrl)
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn--outline btn--sm"
+              onClick={() => handleAddImageUrl(newImageUrl)}
+              disabled={!newImageUrl.trim()}
+            >
+              <Plus size={14} /> Add URL
+            </button>
           </div>
         </div>
 

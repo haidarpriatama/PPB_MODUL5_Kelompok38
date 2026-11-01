@@ -397,6 +397,46 @@
   gap: 20px;
 }
 
+/* List view option */
+.stock--list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stock--list .card {
+  flex-direction: row;
+  align-items: center;
+  justifyContent: space-between;
+}
+
+.stock--list .card-btn {
+  flex-direction: row;
+  align-items: center;
+  padding: 10px 16px;
+  gap: 16px;
+  flex: 1;
+}
+
+.stock--list .card-btn > div:first-child {
+  width: 120px !important;
+  height: 90px !important;
+  flex-shrink: 0;
+}
+
+.stock--list .card-img {
+  width: 100%;
+  height: 90px;
+  margin-bottom: 0;
+  border-bottom: none;
+  border-radius: 4px;
+}
+
+.stock--list .card-actions {
+  position: static;
+  padding-right: 16px;
+}
+
 .card {
   position: relative;
   display: flex;
@@ -1516,5 +1556,95 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+ * MODUL 5 CHALLENGE EXTENSIONS — KELOMPOK 38
+ * Pagination, Gallery, Cart, Archive, Thumbs Reactions & Profile
+ * --------------------------------------------------------------------------- */
+
+/* Spin Animation */
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Card Extensions */
+.card--archived {
+  opacity: 0.82;
+  border-style: dashed !important;
+}
+
+.card--archived:hover {
+  opacity: 1;
+}
+
+/* Pagination Bar */
+.pagination-bar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-bar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Cart Modal */
+.cart-modal {
+  max-width: 580px;
+  width: 92%;
+}
+
+.cart-items-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cart-items-list::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+
+/* Gallery Thumbnails */
+.detail-thumbnails::-webkit-scrollbar {
+  height: 6px;
+}
+
+.detail-thumbnails::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+
+/* Review Reactions */
+.review-vote-btn {
+  transition: all 0.15s ease;
+}
+
+.review-vote-btn:hover {
+  border-color: var(--brass);
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+  .detail-hero {
+    flex-direction: column;
+  }
+  .detail-gallery-container {
+    max-width: 100% !important;
+  }
+  .cart-item-row {
+    flex-wrap: wrap;
   }
 }

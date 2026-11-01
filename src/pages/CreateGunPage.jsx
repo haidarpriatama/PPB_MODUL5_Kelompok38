@@ -44,6 +44,8 @@ export default function CreateGunPage({ onBack, onSuccess }) {
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
   const [uploadedImageUrl, setUploadedImageUrl] = useState('')
+  const [galleryImages, setGalleryImages] = useState([])
+  const [newImageUrl, setNewImageUrl] = useState('')
 
   // Specifications (ingredients in API)
   const [specs, setSpecs] = useState([
@@ -73,6 +75,7 @@ export default function CreateGunPage({ onBack, onSuccess }) {
       specs,
       steps,
       uploadedImageUrl,
+      galleryImages,
     }
     const saved = saveDraft(draftData, 'create')
     if (saved) {
@@ -83,7 +86,7 @@ export default function CreateGunPage({ onBack, onSuccess }) {
         setTimeout(() => setSuccessMsg(''), 3000)
       }
     }
-  }, [formData, specs, steps, uploadedImageUrl])
+  }, [formData, specs, steps, uploadedImageUrl, galleryImages])
 
   // Auto-save draft every 30 seconds while in form step
   useEffect(() => {
@@ -102,9 +105,15 @@ export default function CreateGunPage({ onBack, onSuccess }) {
       if (draft.formData) setFormData(draft.formData)
       if (draft.specs) setSpecs(draft.specs)
       if (draft.steps) setSteps(draft.steps)
+      if (draft.galleryImages && Array.isArray(draft.galleryImages)) {
+        setGalleryImages(draft.galleryImages)
+      }
       if (draft.uploadedImageUrl) {
         setUploadedImageUrl(draft.uploadedImageUrl)
         setImagePreview(draft.uploadedImageUrl)
+        if (!draft.galleryImages || draft.galleryImages.length === 0) {
+          setGalleryImages([draft.uploadedImageUrl])
+        }
         setCurrentStep('form')
       }
       setShowDraftModal(false)
@@ -145,6 +154,7 @@ export default function CreateGunPage({ onBack, onSuccess }) {
     setImageFile(null)
     setImagePreview(url)
     setUploadedImageUrl(url)
+    setGalleryImages((prev) => Array.from(new Set([url, ...prev])))
     setCurrentStep('form')
     setError('')
   }
@@ -154,6 +164,7 @@ export default function CreateGunPage({ onBack, onSuccess }) {
     if (!imageFile) {
       // If user already previewed a preset or entered a url, advance to form
       if (uploadedImageUrl) {
+        setGalleryImages((prev) => Array.from(new Set([uploadedImageUrl, ...prev])))
         setCurrentStep('form')
         return
       }
@@ -167,6 +178,7 @@ export default function CreateGunPage({ onBack, onSuccess }) {
       const result = await uploadService.uploadImage(imageFile)
       if (result.success && result.data?.url) {
         setUploadedImageUrl(result.data.url)
+        setGalleryImages((prev) => Array.from(new Set([result.data.url, ...prev])))
         setCurrentStep('form')
       } else {
         throw new Error(result.message || 'Image upload failed.')
@@ -174,11 +186,52 @@ export default function CreateGunPage({ onBack, onSuccess }) {
     } catch (err) {
       console.warn('Upload API failed, falling back to local preview:', err)
       // Allow fallback to image preview so the user can continue even if MinIO bucket is unreachable
-      setUploadedImageUrl(imagePreview || '/guns/pistol.svg')
+      const fallback = imagePreview || '/guns/pistol.svg'
+      setUploadedImageUrl(fallback)
+      setGalleryImages((prev) => Array.from(new Set([fallback, ...prev])))
       setCurrentStep('form')
     } finally {
       setUploading(false)
     }
+  }
+
+  // Add extra image to gallery
+  const handleAddExtraImage = async (file) => {
+    if (!file) return
+    try {
+      setUploading(true)
+      const res = await uploadService.uploadImage(file)
+      if (res.success && res.data?.url) {
+        setGalleryImages((prev) => [...prev, res.data.url])
+      }
+    } catch {
+      const dataUrl = URL.createObjectURL(file)
+      setGalleryImages((prev) => [...prev, dataUrl])
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleAddImageUrl = (url) => {
+    if (!url || !url.trim()) return
+    setGalleryImages((prev) => Array.from(new Set([...prev, url.trim()])))
+    setNewImageUrl('')
+  }
+
+  const handleRemoveGalleryImage = (idx) => {
+    if (galleryImages.length <= 1) {
+      alert('Katalog harus memiliki minimal 1 gambar.')
+      return
+    }
+    setGalleryImages((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleSetPrimaryImage = (idx) => {
+    setGalleryImages((prev) => {
+      const copy = [...prev]
+      const [chosen] = copy.splice(idx, 1)
+      return [chosen, ...copy]
+    })
   }
 
   const handleFormChange = (e) => {
@@ -256,12 +309,15 @@ export default function CreateGunPage({ onBack, onSuccess }) {
       return
     }
 
+    const finalImages = galleryImages.length > 0 ? galleryImages : [uploadedImageUrl || '/guns/pistol.svg']
+
     // Prepare payload compliant with backend /api/v1/recipes schema
     const payload = {
       name: formData.name.trim(),
       category: formData.category || 'makanan',
       description: formData.description.trim() || `${formData.type} caliber ${formData.caliber}.`,
-      image_url: uploadedImageUrl || '/guns/pistol.svg',
+      image_url: finalImages[0],
+      images: finalImages,
       prep_time: 15,
       cook_time: Number(formData.price) || 500, // Price stored in cook_time
       servings: Number(formData.servings) || 1,
@@ -447,20 +503,169 @@ export default function CreateGunPage({ onBack, onSuccess }) {
       {/* STEP 2: Product Form */}
       {currentStep === 'form' && (
         <form onSubmit={handleSubmit} className="entry-form">
-          {/* Active Image Thumbnail */}
-          <div className="selected-thumb-bar">
-            <img src={uploadedImageUrl || imagePreview} alt="Selected" className="thumb-small" />
-            <div className="thumb-info">
-              <span className="thumb-title">Imagery Assigned</span>
-              <span className="thumb-sub">Ready for registration</span>
+          {/* Multiple Image Gallery Section (Challenge 9) */}
+          <div
+            className="gallery-manager-box"
+            style={{
+              padding: '16px',
+              background: 'var(--paper)',
+              border: '1px solid var(--line)',
+              borderRadius: '8px',
+              marginBottom: '1.5rem',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+              <div>
+                <span className="display" style={{ fontWeight: 700, fontSize: '1.05rem' }}>
+                  Weapon Gallery ({galleryImages.length} images)
+                </span>
+                <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: 'var(--steel)' }}>
+                  Tambahkan beberapa foto untuk katalog ini. Gambar pertama adalah gambar sampul utama.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <label
+                  htmlFor="add-extra-file"
+                  className="btn btn--outline btn--sm"
+                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <Plus size={14} /> Upload Foto
+                  <input
+                    id="add-extra-file"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      if (e.target.files[0]) handleAddExtraImage(e.target.files[0])
+                    }}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn--outline btn--sm"
+                  onClick={() => setCurrentStep('upload')}
+                >
+                  Pilih Preset
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              className="btn btn--outline btn--sm"
-              onClick={() => setCurrentStep('upload')}
-            >
-              Change Image
-            </button>
+
+            {/* Gallery Grid */}
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+              {galleryImages.map((img, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    position: 'relative',
+                    width: '90px',
+                    height: '90px',
+                    borderRadius: '6px',
+                    border: idx === 0 ? '2px solid var(--brass)' : '1px solid var(--line)',
+                    background: '#fff',
+                    padding: '4px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <img
+                    src={img}
+                    alt={`Preview ${idx + 1}`}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  />
+                  {idx === 0 ? (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        bottom: '2px',
+                        left: '2px',
+                        right: '2px',
+                        background: 'var(--brass)',
+                        color: '#fff',
+                        fontSize: '0.65rem',
+                        fontWeight: 700,
+                        textAlign: 'center',
+                        borderRadius: '2px',
+                      }}
+                    >
+                      Primary
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      style={{
+                        position: 'absolute',
+                        bottom: '2px',
+                        left: '2px',
+                        right: '2px',
+                        background: 'rgba(24,34,44,0.75)',
+                        color: '#fff',
+                        fontSize: '0.62rem',
+                        border: 'none',
+                        cursor: 'pointer',
+                        borderRadius: '2px',
+                      }}
+                      onClick={() => handleSetPrimaryImage(idx)}
+                      title="Jadikan gambar utama"
+                    >
+                      Set Primary
+                    </button>
+                  )}
+                  {galleryImages.length > 1 && (
+                    <button
+                      type="button"
+                      style={{
+                        position: 'absolute',
+                        top: '-6px',
+                        right: '-6px',
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        background: '#c53030',
+                        color: '#fff',
+                        border: 'none',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      onClick={() => handleRemoveGalleryImage(idx)}
+                      title="Hapus foto ini"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* Add image by URL */}
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px', width: '100%' }}>
+                <input
+                  type="url"
+                  placeholder="Atau masukkan tautan URL gambar baru (https://...)"
+                  className="form-input"
+                  style={{ flex: 1, minWidth: '220px', padding: '6px 10px', fontSize: '0.85rem' }}
+                  value={newImageUrl}
+                  onChange={(e) => setNewImageUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddImageUrl(newImageUrl)
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn--outline btn--sm"
+                  onClick={() => handleAddImageUrl(newImageUrl)}
+                  disabled={!newImageUrl.trim()}
+                >
+                  <Plus size={14} /> Add URL
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Core Info */}

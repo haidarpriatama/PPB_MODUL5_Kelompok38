@@ -1,15 +1,21 @@
 import { apiClient, IS_SUPABASE } from '../config/api'
+import queryCache from '../utils/queryCache'
 
 // ---------------------------------------------------------------------------
-// ReviewService — product reviews & ratings.
-// Supports both Supabase (public.reviews) and university API (/api/v1/recipes/:id/reviews).
+// ReviewService — product reviews & ratings with query caching & full CRUD
 // ---------------------------------------------------------------------------
 
 class ReviewService {
   /**
-   * Fetch all reviews for a given product.
+   * Fetch all reviews for a given product with caching.
    */
-  async getReviews(gunId) {
+  async getReviews(gunId, bypassCache = false) {
+    const cacheKey = `reviews_${gunId}`
+    if (!bypassCache) {
+      const cached = queryCache.get(cacheKey)
+      if (cached) return cached
+    }
+
     if (IS_SUPABASE) {
       const data = await apiClient.get(
         `/rest/v1/reviews?product_id=eq.${gunId}&select=*&order=created_at.desc`,
@@ -18,6 +24,7 @@ class ReviewService {
         ? data.map((r) => ({
             id: r.id,
             product_id: r.product_id,
+            user_id: r.user_id,
             user_identifier: r.user_id ? `Operator ${String(r.user_id).substring(0, 8)}` : 'Anonymous',
             rating: r.rating,
             comment: r.comment || '',
@@ -25,18 +32,22 @@ class ReviewService {
           }))
         : []
 
-      return { success: true, data: list }
+      const result = { success: true, data: list }
+      queryCache.set(cacheKey, result)
+      return result
     }
 
-    return apiClient.get(`/api/v1/recipes/${gunId}/reviews`)
+    const response = await apiClient.get(`/api/v1/recipes/${gunId}/reviews`)
+    queryCache.set(cacheKey, response)
+    return response
   }
 
   /**
    * Submit a new review.
-   * @param {string|number} gunId
-   * @param {Object} reviewData  { user_identifier, rating, comment }
    */
   async createReview(gunId, reviewData) {
+    queryCache.invalidate(`reviews_${gunId}`)
+
     if (IS_SUPABASE) {
       const payload = {
         product_id: Number(gunId),
@@ -58,7 +69,9 @@ class ReviewService {
   /**
    * Edit an existing review.
    */
-  async updateReview(reviewId, reviewData) {
+  async updateReview(reviewId, reviewData, gunId) {
+    if (gunId) queryCache.invalidate(`reviews_${gunId}`)
+
     if (IS_SUPABASE) {
       const res = await apiClient.patch(
         `/rest/v1/reviews?id=eq.${reviewId}`,
@@ -77,7 +90,9 @@ class ReviewService {
   /**
    * Delete a review.
    */
-  async deleteReview(reviewId) {
+  async deleteReview(reviewId, gunId) {
+    if (gunId) queryCache.invalidate(`reviews_${gunId}`)
+
     if (IS_SUPABASE) {
       await apiClient.delete(`/rest/v1/reviews?id=eq.${reviewId}`)
       return { success: true }
